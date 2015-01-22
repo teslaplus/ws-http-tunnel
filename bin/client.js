@@ -17,6 +17,7 @@ var connect = function () {
     setTimeout(connect, 2000);
   });
   client.on('connect', function (connection) {
+    log('WebSocket Client Connected');
     var send = function (json) {
       if (connection.connected) {
         connection.sendUTF(JSON.stringify(json));
@@ -24,7 +25,8 @@ var connect = function () {
         log('discarded messaged (not connected)');
       }
     };
-    log('WebSocket Client Connected');
+    send(handshake());
+
     connection.on('error', function (error) {
       log("Connection Error: " + error.toString());
       setTimeout(connect, 1000);
@@ -37,20 +39,20 @@ var connect = function () {
       if (message.type === 'utf8') {
         log("Received: '" + message.utf8Data + "'");
       }
+      var messageJSON = JSON.parse(message.utf8Data);
       var response = {
+        id: messageJSON.id,
         type: 'http-response',
         statusCode: 200,
-        statusText: 'OK',
         headers: {
           'Server': 'fake device'
         },
         body: {
-          message: 'hello'
+          echo: messageJSON
         }
       };
       connection.sendUTF(JSON.stringify(response));
     });
-    send(handshake());
   });
   client.connect('ws://localhost:8080/', 'httpd');
 };

@@ -13,6 +13,11 @@ var format = require('util').format;
 var reDeviceAndPath = /\/(\d+)(\/.*)/;
 // Currently connected devices (id -> connection)
 var deviceConnections = {};
+var pendingResponses = {};
+var requestId = Math.floor(Math.random() * 100000000);
+
+// how long to wait for device to respond
+var deviceTimeout = 30 * 1000;
 /*
   http server forwards incoming connections to devices based on leading path component
 
@@ -32,22 +37,28 @@ var server = http.createServer(function (request, response) {
     var path = parsedPath[2];
     var method = request.method;
     log('received request for device ' + deviceId + ': ' + method + ' ' + path);
-    // TODO: lookup device and see if it's connected.
     var deviceConnection = deviceConnections[deviceId];
-    // If so, send request via websocket connection
+    requestId++;
+    pendingResponses[requestId] = response;
     if (deviceConnection) {
       deviceConnection.sendJSON({
+        id: requestId,
         method: method,
         path: path,
         headers: request.headers
+        // TODO: support request body
       });
-      deviceConnection.handler = function (httpMessage) {
-        console.log(httpMessage);
-        response.writeHead(httpMessage.statusCode, httpMessage.headers);
-        response.end(JSON.stringify(httpMessage.body));
-      };
+      setTimeout(function () {
+        if (!response.headersSent) {
+          response.writeHead(504);
+          response.end(format('device with id "%s" failed to respond', deviceId));
+          delete pendingResponses[requestId];
+          log(format('closing device connection for id "%s"', deviceId));
+          // close connection to device
+          deviceConnection.close();
+        }
+      }, deviceTimeout);
     } else {
-      // If no, send 502
       response.writeHead(502);
       response.end(format('device with id "%s" is not connected', deviceId));
     }
@@ -90,9 +101,14 @@ var messages = {
     deviceConnected(deviceId, connection);
   },
   'http-response': function (message, connection) {
-    if (connection.handler) {
-      connection.handler(message);
-      delete connection.handler;
+    var id = message.id;
+    var response = pendingResponses[id];
+    if (response) {
+      response.writeHead(message.statusCode, message.headers);
+      response.end(JSON.stringify(message.body));
+      delete pendingResponses[id];
+    } else {
+      log('could not locate response for id ' + id);
     }
   }
 };
